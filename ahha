@@ -1,0 +1,1758 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chiikawa RPG - Cửa Hàng & Chiến Đấu Boss</title>
+    <!-- Thư viện Firebase -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Thiết lập cấu hình Firebase
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        if (Object.keys(firebaseConfig).length > 0) {
+            setLogLevel('Debug'); // Bật log debug cho Firestore
+            window.firebaseApp = initializeApp(firebaseConfig);
+            window.db = getFirestore(window.firebaseApp);
+            window.auth = getAuth(window.firebaseApp);
+
+            // Xử lý xác thực
+            onAuthStateChanged(window.auth, (user) => {
+                if (user) {
+                    window.userId = user.uid;
+                    console.log("Firebase Auth OK. User ID:", window.userId);
+                    if (window.onFirebaseReady) {
+                        window.onFirebaseReady();
+                    }
+                } else if (!window.authReadyAttempted) {
+                    // Cố gắng đăng nhập với token tùy chỉnh hoặc ẩn danh
+                    window.authReadyAttempted = true;
+                    if (initialAuthToken) {
+                        signInWithCustomToken(window.auth, initialAuthToken).catch(error => {
+                            console.error("Lỗi đăng nhập với token tùy chỉnh:", error);
+                            signInAnonymously(window.auth);
+                        });
+                    } else {
+                        signInAnonymously(window.auth);
+                    }
+                }
+            });
+        } else {
+            console.error("Không tìm thấy cấu hình Firebase.");
+            window.userId = crypto.randomUUID(); // Dùng ID ngẫu nhiên nếu không có Firebase
+            window.isFirebaseAvailable = false;
+        }
+
+    </script>
+    <!-- Thư viện Tone.js cho âm nhạc -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=Mali:wght@400;700&display=swap');
+
+        :root {
+            --chiikawa-pink: #fbcfe8;
+            --hachiware-blue: #a5f3fc;
+            --usagi-yellow: #fde68a;
+            --primary-bg: #fff;
+            --secondary-bg: #f9f9f9;
+            --border-color: #333;
+            --text-color: #1f2937;
+            --coin-color: #f59e0b; /* Vàng đồng */
+        }
+
+        body {
+            font-family: 'Mali', cursive, 'Inter', sans-serif;
+            background-color: var(--chiikawa-pink);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        .game-container {
+            background-color: var(--primary-bg);
+            border: 5px solid var(--border-color);
+            border-radius: 20px;
+            box-shadow: 10px 10px 0px 0px var(--border-color);
+            padding: 20px;
+            max-width: 650px;
+            width: 100%;
+            display: grid;
+            grid-template-rows: auto auto 1fr auto;
+            gap: 15px;
+        }
+
+        h1 {
+            font-size: 2.2rem;
+            text-align: center;
+            color: var(--text-color);
+            text-shadow: 2px 2px 0 var(--chiikawa-pink);
+            margin-top: 0;
+        }
+
+        .section-title {
+            font-size: 1.4rem;
+            font-weight: 700;
+            color: var(--text-color);
+            border-bottom: 2px solid var(--border-color);
+            padding-bottom: 5px;
+            margin-bottom: 10px;
+        }
+
+        .character-selection, .controls, .combat-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        button, .character-card {
+            background-color: var(--secondary-bg);
+            border: 3px solid var(--border-color);
+            border-radius: 12px;
+            padding: 10px 15px;
+            font-family: 'Mali', cursive;
+            font-size: 1rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.1s ease;
+            box-shadow: 3px 3px 0 var(--border-color);
+        }
+
+        button:hover, .character-card:hover {
+            transform: translate(1px, 1px);
+            box-shadow: 2px 2px 0 var(--border-color);
+        }
+
+        button:active, .character-card.selected, .shop-item-card:active {
+            transform: translate(3px, 3px);
+            box-shadow: none;
+            background-color: var(--usagi-yellow);
+        }
+
+        .character-card {
+            width: 100px;
+            text-align: center;
+            padding: 15px 10px;
+        }
+        
+        /* CSS MỚI cho Hình Ảnh Nhân Vật */
+        .char-icon-img {
+            width: 50px; /* Kích thước hình ảnh */
+            height: 50px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 2px solid var(--border-color);
+            margin: 0 auto 5px auto;
+            display: block;
+        }
+        /* HACK: nếu ảnh bị lỗi (chỉ hiện placeholder) thì dùng emoji tạm */
+        .char-icon {
+            font-size: 2rem;
+            display: block;
+            margin-bottom: 5px;
+        }
+
+
+        .chiikawa-color { background-color: var(--chiikawa-pink); }
+        .hachiware-color { background-color: var(--hachiware-blue); }
+        .usagi-color { background-color: var(--usagi-yellow); }
+
+        .game-status {
+            padding: 15px;
+            background-color: var(--secondary-bg);
+            border: 2px solid var(--border-color);
+            border-radius: 12px;
+        }
+
+        .stat-line {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 5px;
+            font-size: 1.1rem;
+        }
+        
+        #player-chicoin {
+            color: var(--coin-color);
+            font-weight: bold;
+            font-size: 1.2rem;
+        }
+
+        .log-area {
+            height: 150px;
+            overflow-y: auto;
+            border: 2px inset var(--border-color);
+            padding: 10px;
+            background-color: #f0f0f0;
+            border-radius: 8px;
+            white-space: pre-wrap;
+            box-shadow: inset 1px 1px 3px rgba(0,0,0,0.1);
+        }
+
+        .log-area p {
+            margin: 0 0 5px 0;
+            line-height: 1.2;
+        }
+
+        .message-info { color: green; }
+        .message-warn { color: orange; }
+        .message-error { color: red; font-weight: bold; }
+        .message-quest { color: purple; font-weight: bold; }
+        .message-damage { color: #880000; font-weight: 700; }
+        .message-coin { color: var(--coin-color); font-weight: 700; }
+        .message-effect { color: #008888; font-weight: 700; }
+        
+        /* Hiển thị HP của Boss/Enemy trong trận đấu */
+        #enemy-status {
+            margin-top: 15px;
+            padding: 10px;
+            border: 2px solid #a53b3b;
+            background-color: #fcebeb;
+            border-radius: 8px;
+            font-weight: bold;
+        }
+
+        .inventory {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+            flex-wrap: wrap;
+        }
+
+        .inventory-item {
+            padding: 5px 10px;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            background-color: #eee;
+            font-size: 0.9rem;
+        }
+
+        /* --- SHOP STYLES --- */
+        .shop-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 15px;
+            margin-top: 10px;
+        }
+
+        .shop-item-card {
+            background-color: #e0f2fe; /* Light blue background for shop */
+            border: 3px solid var(--border-color);
+            border-radius: 12px;
+            padding: 10px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.1s ease;
+            box-shadow: 3px 3px 0 var(--border-color);
+        }
+
+        .shop-item-card h4 {
+            margin: 5px 0 5px 0;
+            font-size: 1.1rem;
+        }
+
+        .shop-item-card p {
+            margin: 0;
+            font-size: 0.85rem;
+            color: #4b5563;
+        }
+
+        .shop-price {
+            font-weight: 700;
+            color: var(--coin-color);
+            margin-top: 5px;
+        }
+
+        .shop-subtitle {
+            font-size: 1.2rem;
+            font-weight: 700;
+            margin-top: 15px;
+            border-bottom: 1px dashed #999;
+            padding-bottom: 5px;
+        }
+
+        #saveLoadStatus {
+            text-align: center;
+            margin-top: 10px;
+            font-size: 0.9rem;
+            color: #666;
+        }
+        
+        /* Nút chiến đấu */
+        .combat-actions button {
+            padding: 10px;
+            flex-grow: 1;
+            min-width: 120px;
+            max-width: 150px;
+            background-color: #fef3c7; /* Màu nhạt cho action */
+        }
+        
+        .combat-actions .attack-btn {
+            max-width: none;
+            flex-grow: 2;
+            background-color: #ff6666;
+        }
+        
+        /* Responsive adjustments */
+        @media (max-width: 480px) {
+            h1 { font-size: 1.8rem; }
+            .character-card { width: 80px; padding: 10px 5px; }
+            button { padding: 8px 12px; font-size: 0.9rem; }
+            .shop-grid { grid-template-columns: 1fr 1fr; }
+            .combat-actions { flex-direction: column; }
+            .combat-actions button { max-width: 100%; }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="game-container">
+        <h1>✨ Chiikawa RPG ✨</h1>
+
+        <!-- Khu vực Tiền tệ -->
+        <div class="stat-line game-status" id="currencyDisplay" style="text-align: center; padding: 8px;">
+            <span>💰 Chicoin:</span>
+            <span id="player-chicoin">0</span>
+        </div>
+
+        <!-- Màn hình chính (Thay thế cho gameScreen) -->
+        <div id="gameViewContainer">
+            <!-- 1. MÀN HÌNH CHỌN NHÂN VẬT -->
+            <div id="charSelection" style="display: block;">
+                <div class="section-title">Chọn Nhân Vật Khởi Đầu</div>
+                <div class="character-selection">
+                    <!-- Sắp xếp lại theo yêu cầu: Hachiware, Usagi, Chiikawa -->
+                    <div class="character-card hachiware-color" data-char="Hachiware" onclick="selectCharacter('Hachiware')">
+                        <img class="char-icon-img" src="uploaded:image_1937f8.png-9a2d065e-9dd0-4649-ad2e-b75ffeff55cf" alt="Hachiware" onerror="this.outerHTML='<span class=\'char-icon\'>🛠️</span>'">
+                        Hachiware
+                    </div>
+                    <div class="character-card usagi-color" data-char="Usagi" onclick="selectCharacter('Usagi')">
+                        <img class="char-icon-img" src="uploaded:image_1937da.png-21f9a213-c10c-4788-9b6e-d25be7a33c04" alt="Usagi" onerror="this.outerHTML='<span class=\'char-icon\'>🐰</span>'">
+                        Usagi
+                    </div>
+                    <div class="character-card chiikawa-color" data-char="Chiikawa" onclick="selectCharacter('Chiikawa')">
+                        <img class="char-icon-img" src="uploaded:image_1937d5.png-4a4b9a35-9863-4748-87eb-5ce16baafd83" alt="Chiikawa" onerror="this.outerHTML='<span class=\'char-icon\'>💧</span>'">
+                        Chiikawa
+                    </div>
+                </div>
+            </div>
+
+            <!-- 2. MÀN HÌNH GAME CHÍNH -->
+            <div id="mainGameView" style="display: none;">
+                <div class="section-title">Thông Tin Nhân Vật</div>
+                <div class="game-status">
+                    <div class="stat-line">
+                        <span>Nhân Vật:</span>
+                        <span id="player-name"></span>
+                    </div>
+                    <div class="stat-line">
+                        <span>Cấp độ:</span>
+                        <span id="player-level"></span>
+                    </div>
+                    <div class="stat-line">
+                        <span>HP:</span>
+                        <span id="player-hp"></span>
+                    </div>
+                    <div class="stat-line">
+                        <span>Sức tấn công (ATK):</span>
+                        <span id="player-atk"></span>
+                    </div>
+                    <div class="stat-line">
+                        <span>Phòng thủ (DEF):</span>
+                        <span id="player-def"></span>
+                    </div>
+                    <div class="stat-line">
+                        <span>EXP:</span>
+                        <span id="player-exp"></span>
+                    </div>
+                    <div class="stat-line">
+                        <span>Vũ khí:</span>
+                        <span id="player-weapon"></span>
+                    </div>
+                    <div class="stat-line">
+                        <span>Hiệu ứng:</span>
+                        <span id="player-effects" style="color: #008888;"></span>
+                    </div>
+                    <!-- Khu vực hiển thị HP địch thủ (chỉ hiển thị trong trận đấu) -->
+                    <div id="enemy-status" style="display:none;">
+                        <div class="stat-line">
+                            <span id="enemy-name-display"></span>
+                            <span id="enemy-hp-display"></span>
+                        </div>
+                    </div>
+                    <div class="section-title" style="margin-top: 10px; border-bottom: none;">Túi đồ</div>
+                    <div class="inventory" id="player-inventory">
+                        <!-- Items here -->
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 3. MÀN HÌNH SHOP -->
+            <div id="shopView" style="display: none;">
+                <div class="section-title">🛒 Cửa Hàng Chicoin</div>
+
+                <div class="shop-subtitle">🍔 Đồ Ăn (Hồi Máu)</div>
+                <div class="shop-grid" id="foodShopGrid">
+                    <!-- Food items injected here -->
+                </div>
+
+                <div class="shop-subtitle">⚔️ Vũ Khí</div>
+                <div class="shop-grid" id="weaponShopGrid">
+                    <!-- Weapon items injected here -->
+                </div>
+            </div>
+
+            <!-- 4. MÀN HÌNH BOSS CHÍNH -->
+            <div id="finalBossView" style="display: none;">
+                 <div class="section-title">🔥 Thử Thách Cuối Cùng: Boss Chính</div>
+                 <p style="text-align: center; color: #880000; font-weight: bold;">
+                    Bạn đã sẵn sàng đối mặt với những mối nguy hiểm lớn nhất?
+                 </p>
+                 <div class="shop-grid" id="finalBossGrid">
+                     <!-- Bosses injected here -->
+                 </div>
+            </div>
+
+        </div>
+
+        <!-- Khu vực Nhật ký Game -->
+        <div class="section-title">Nhật Ký & Nhiệm Vụ</div>
+        <div class="log-area" id="gameLog">
+            <p class="message-info">Chào mừng đến với Cuộc Phiêu Lưu Cùng Chiikawa!</p>
+            <p class="message-info">Vui lòng chọn nhân vật để bắt đầu.</p>
+        </div>
+
+        <!-- Khu vực Điều khiển -->
+        <div class="section-title">Thao Tác</div>
+        <div class="controls" id="gameControls">
+            <button onclick="toggleMusic()" id="musicBtn">🔇 Bật Nhạc</button>
+        </div>
+
+        <p id="saveLoadStatus">Đang chờ kết nối Firebase...</p>
+        <p style="text-align: center; font-size: 0.8rem; color: #999;">UserID: <span id="displayUserId">...</span></p>
+
+    </div>
+
+    <script>
+        // --- CÁC ĐỊNH NGHĨA CƠ BẢN CỦA GAME ---
+
+        let game;
+        const GAME_DATA_COLLECTION = "chiikawa-rpg-data";
+        
+        let isInFight = false;
+        let cakeUsedInFight = false;
+        let currentView = 'selection'; 
+        let currentEnemy = null; 
+
+        // Hằng số cho các hiệu ứng chiến thuật
+        const COMBAT_EFFECTS = {
+            FOCUS_DAMAGE_MULTIPLIER: 1.5,
+            DEFEND_DEFENSE_MULTIPLIER: 2.0,
+        };
+
+        // Câu cửa miệng nhân vật
+        const CATCHPHRASES = {
+            Chiikawa: "Haaa?",
+            Hachiware: "Oi!",
+            Usagi: "Yaha!"
+        };
+
+        // ĐIỀU CHỈNH: Thêm URL hình ảnh nhân vật
+        const BASE_STATS = {
+            Chiikawa: { icon: '💧', hp: 150, atk: 15, def: 15, baseColor: 'var(--chiikawa-pink)', imgUrl: 'uploaded:image_1937d5.png-4a4b9a35-9863-4748-87eb-5ce16baafd83' },
+            Hachiware: { icon: '🛠️', hp: 180, atk: 17, def: 10, baseColor: 'var(--hachiware-blue)', imgUrl: 'uploaded:image_1937f8.png-9a2d065e-9dd0-4649-ad2e-b75ffeff55cf' },
+            Usagi: { icon: '🐰', hp: 120, atk: 20, def: 8, baseColor: 'var(--usagi-yellow)', imgUrl: 'uploaded:image_1937da.png-21f9a213-c10c-4788-9b6e-d25be7a33c04' },
+        };
+        
+        // --- DỮ LIỆU QUÁI THƯỜNG (20 LOẠI) ---
+        // Sát thương, HP và EXP thấp.
+        const NORMAL_ENEMY_POOL = {
+            'Sâu Bướm 🐛': { hp: 20, atk: 10, def: 0, exp: 10, dropCoin: { min: 5, max: 10 }, evasion: 0.2, special: "Né tránh 20%" },
+            'Chuột Nhắt 🐭': { hp: 15, atk: 12, def: 0, exp: 8, dropCoin: { min: 4, max: 9 }, special: "Đánh nhanh" },
+            'Chim Cánh Cụt Lửa 🔥': { hp: 25, atk: 8, def: 5, exp: 12, dropCoin: { min: 6, max: 11 }, special: "Giáp yếu" },
+            'Thằn Lằn Xanh 🦎': { hp: 30, atk: 11, def: 2, exp: 15, dropCoin: { min: 7, max: 13 }, special: "HP cao" },
+            'Cua Nhỏ 🦀': { hp: 22, atk: 10, def: 4, exp: 11, dropCoin: { min: 5, max: 10 }, special: "Phòng thủ nhỏ" },
+            'Ốc Sên Tím 🐌': { hp: 40, atk: 5, def: 8, exp: 18, dropCoin: { min: 8, max: 15 }, special: "Cực kỳ trâu" },
+            'Bọ Cánh Cứng 🐞': { hp: 28, atk: 15, def: 1, exp: 14, dropCoin: { min: 6, max: 12 }, special: "Sát thương cao" },
+            'Dơi Đêm 🦇': { hp: 18, atk: 13, def: 0, exp: 9, dropCoin: { min: 4, max: 8 }, evasion: 0.3, special: "Né tránh 30%" },
+            'Gấu Bông Rách 🧸': { hp: 35, atk: 9, def: 3, exp: 16, dropCoin: { min: 7, max: 14 }, special: "Tấn công ngẫu nhiên" },
+            'Mực Nước Ngọt 🦑': { hp: 26, atk: 11, def: 0, exp: 13, dropCoin: { min: 5, max: 11 }, special: "Đòn đánh gây choáng nhẹ" },
+            'Linh Miêu Núi 🐆': { hp: 20, atk: 16, def: 0, exp: 15, dropCoin: { min: 8, max: 16 }, special: "Sát thương chí mạng" },
+            'Rắn Đất 🐍': { hp: 32, atk: 10, def: 3, exp: 14, dropCoin: { min: 6, max: 13 }, special: "Có độc (sát thương nhỏ theo thời gian)" },
+            'Hổ Lửa Nhỏ 🐯': { hp: 27, atk: 14, def: 1, exp: 16, dropCoin: { min: 7, max: 15 }, special: "Tấn công nhanh" },
+            'Khỉ Nhanh Nhẹn 🐒': { hp: 24, atk: 13, def: 0, exp: 12, dropCoin: { min: 5, max: 11 }, evasion: 0.25, special: "Né tránh 25%" },
+            'Nhện Độc 🕷️': { hp: 19, atk: 18, def: 0, exp: 17, dropCoin: { min: 9, max: 18 }, special: "ATK rất cao" },
+            'Cây Ăn Thịt Mini 🌿': { hp: 38, atk: 7, def: 5, exp: 15, dropCoin: { min: 8, max: 17 }, special: "Hút máu" },
+            'Rồng Nhỏ Lạc Đường 🐉': { hp: 45, atk: 10, def: 10, exp: 20, dropCoin: { min: 10, max: 20 }, special: "Rất hiếm, EXP cao" },
+            'Ma Quái Yếu 👻': { hp: 10, atk: 15, def: 0, exp: 10, dropCoin: { min: 1, max: 5 }, special: "Dễ giết, né tránh cao" },
+            'Thỏ Rừng Hung Hãn 🐇': { hp: 23, atk: 12, def: 2, exp: 11, dropCoin: { min: 5, max: 10 }, special: "Tấn công hai lần" },
+            'Cáo Săn Mồi 🦊': { hp: 29, atk: 14, def: 0, exp: 13, dropCoin: { min: 6, max: 12 }, special: "Đòn đánh lừa" }
+        };
+
+        // --- DỮ LIỆU MINI BOSS (10 LOẠI) ---
+        // Sát thương, HP và EXP cao hơn quái thường
+        const MINI_BOSS_POOL = {
+            'Kurisuzumugi 🦀': { 
+                hp: 120, atk: 25, def: 10, exp: 50, item: 'Kiếm Sáng', location: 'East Field', 
+                special: "Tấn công mạnh, phòng thủ ổn.", icon: '🦀', dropCoin: { min: 30, max: 50 }
+            },
+            'Nấm Khổng Lồ 🍄': { 
+                hp: 160, atk: 15, def: 5, exp: 40, item: 'Nấm Hồi Phục', location: 'Forest', 
+                special: "HP cao, có 25% làm Chiikawa 'Chậm Chạp' (giảm ATK 50% trong 2 lượt).", icon: '🍄', dropCoin: { min: 25, max: 45 }
+            },
+            'Chuột Chũi Điên 🐹': { 
+                hp: 80, atk: 30, def: 0, exp: 60, item: 'Đá Lửa', location: 'Cave', 
+                special: "ATK cao, có 30% né tránh đòn đánh của Chiikawa.", icon: '🐹', evasion: 0.3, dropCoin: { min: 35, max: 55 }
+            },
+            'Nhím Biển Gai 🌊': { 
+                hp: 100, atk: 18, def: 15, exp: 45, item: 'Vỏ Gai', location: 'Ocean', 
+                special: "Phản lại 10% sát thương nhận được.", icon: '🌊', reflect: 0.1, dropCoin: { min: 20, max: 40 }
+            },
+            'Ngao Khổng Lồ 🐚': { 
+                hp: 250, atk: 5, def: 20, exp: 30, item: 'Ngọc Trai', location: 'Deep Sea', 
+                special: "HP và DEF cực cao, nhưng đánh bại sẽ rơi ra 💰 50-100 Chicoin.", icon: '🐚', dropCoin: { min: 50, max: 100 }
+            },
+            'Bò Sát Độc 🦖': { 
+                hp: 130, atk: 20, def: 8, exp: 55, item: 'Thuốc Giải Độc', location: 'Swamp', 
+                special: "30% gây hiệu ứng 'Độc' (mất 5 HP mỗi lượt).", icon: '🦖', poison: 0.3, dropCoin: { min: 40, max: 60 }
+            },
+            'Chim Khổng Lồ 🦅': { 
+                hp: 90, atk: 35, def: 5, exp: 70, item: 'Lông Vũ Tốc Độ', location: 'Mountain', 
+                special: "ATK cực cao, nhưng HP thấp. Có 20% tấn công hai lần.", icon: '🦅', doubleAttack: 0.2, dropCoin: { min: 50, max: 70 }
+            },
+            'Người Đá 🗿': { 
+                hp: 200, atk: 10, def: 30, exp: 40, item: 'Giáp Đá', location: 'Volcano', 
+                special: "DEF rất cao, nhưng dễ bị tấn công phép (hiện không có).", icon: '🗿', dropCoin: { min: 30, max: 50 }
+            },
+            'Hồn Ma Quỷ Quyệt 😈': { 
+                hp: 150, atk: 22, def: 0, exp: 65, item: 'Bùa Ma', location: 'Old House', 
+                special: "Tấn công bỏ qua 50% DEF của người chơi.", icon: '😈', ignoreDef: 0.5, dropCoin: { min: 45, max: 65 }
+            },
+            'Heo Rừng Cơn Giận 🐗': { 
+                hp: 180, atk: 20, def: 15, exp: 50, item: 'Nanh Sắc', location: 'Jungle', 
+                special: "Sát thương tăng lên khi HP của nó dưới 50%.", icon: '🐗', rage: 0.5, dropCoin: { min: 35, max: 55 }
+            }
+        };
+
+        // --- DỮ LIỆU BOSS CHÍNH (3 LOẠI) ---
+        // Sát thương, HP và EXP RẤT CAO
+        const FINAL_BOSS_POOL = {
+            'Siêu Sâu Bướm Khổng Lồ 🦋': {
+                hp: 400, atk: 40, def: 20, exp: 500, item: 'Cánh Bướm Phép', 
+                special: "Mỗi 3 lượt, nó sẽ hồi 50 HP. Cần sát thương dồn dập.", icon: '🦋', dropCoin: { min: 150, max: 250 }, healTurn: 3, healAmount: 50
+            },
+            'Quái Vật Tí Hon 👹': {
+                hp: 350, atk: 50, def: 10, exp: 600, item: 'Sừng Quỷ', 
+                special: "ATK cực cao. Có 50% gây hiệu ứng 'Choáng' (người chơi không thể hành động lượt sau).", icon: '👹', dropCoin: { min: 200, max: 300 }, stunChance: 0.5
+            },
+            'Thiên Thần Sa Ngã 😇': {
+                hp: 500, atk: 30, def: 30, exp: 800, item: 'Hào Quang Vô Cực', 
+                special: "HP và DEF rất cao. Tấn công có 20% làm giảm DEF vĩnh viễn của người chơi (-2 DEF).", icon: '😇', dropCoin: { min: 250, max: 350 }, defDebuff: 0.2
+            }
+        };
+
+        // Biến để theo dõi lượt đánh của Boss chính
+        let bossTurnCount = 0;
+
+
+        // --- DỮ LIỆU VŨ KHÍ ---
+        const WEAPONS = {
+            'Không': { atk: 0, def: 0 },
+            'Gậy Gỗ': { atk: 5, def: 0 },
+            'Kiếm Sáng': { atk: 10, def: 2 },
+            'Kiếm Sắt ⚔️': { atk: 8, def: 0 },
+            'Cung Gỗ 🏹': { atk: 5, def: 5 },
+            // Vũ khí từ Boss
+            'Cánh Bướm Phép': { atk: 15, def: 5 },
+            'Sừng Quỷ': { atk: 20, def: 0 },
+            'Hào Quang Vô Cực': { atk: 10, def: 15 }
+        };
+
+        // --- DỮ LIỆU SHOP ---
+        const FOOD_ITEMS = {
+            'Cà Phê ☕': { price: 15, heal: 20, description: "+20 HP (Nhỏ)" },
+            'Mì Ly 🍜': { price: 30, heal: 50, description: "+50 HP (Vừa)" },
+            'Bánh Cá 🐟': { price: 50, heal: 80, description: "+80 HP (Lớn)" }
+        };
+
+        const WEAPONS_SHOP = {
+            'Kiếm Sắt ⚔️': { price: 150, atk: 8, def: 0, description: "ATK +8, Cải thiện từ Gậy Gỗ" },
+            'Cung Gỗ 🏹': { price: 100, atk: 5, def: 5, description: "ATK +5, DEF +5, Cân bằng" }
+        };
+
+        const CAKE_HEAL_AMOUNT = 30; // Lượng hồi máu của bánh
+
+        // Cốt truyện mới: Lý do phải đánh quái
+        const INITIAL_QUEST = {
+            name: "Linh Cảm Về Cơn Mưa",
+            description: "Từ ngày cơn 'Mưa Bí Ẩn' rơi xuống, các quái vật thường trở nên hung dữ và cản trở việc săn lùng Chicoin. Hachiware cần tìm một chiếc Gậy Gỗ để tự vệ trong khi điều tra. Hãy chiến đấu với 5 con Quái Thường bất kỳ để tìm nó.",
+            target: 'Quái Thường',
+            requiredCount: 5,
+            currentCount: 0,
+            reward: { item: 'Gậy Gỗ' },
+            active: true
+        };
+        
+        // --- HỆ THỐNG ÂM THANH (TONE.JS) ---
+        let backgroundMusic = null;
+        let isMusicPlaying = false;
+        const MUSIC_URL = "http://googleusercontent.com/file_content/2"; 
+
+        function setupMusic() {
+            if (backgroundMusic) return;
+
+            backgroundMusic = new Tone.Player({
+                url: MUSIC_URL,
+                loop: true, 
+                autostart: false,
+                volume: -10, 
+                onerror: (e) => {
+                    const musicBtn = document.getElementById('musicBtn');
+                    musicBtn.textContent = '❌ Lỗi Nhạc (Vui lòng báo lại)';
+                    musicBtn.disabled = true;
+                    isMusicPlaying = false;
+                    logMessage(`LỖI: Không thể tải file nhạc 'chiiik.mp3'. Tệp có thể bị hỏng hoặc định dạng không tương thích.`, 'error');
+                    console.error("Tone.js Load Error:", e);
+                }
+            }).toDestination();
+        }
+
+        function toggleMusic() {
+            setupMusic(); 
+
+            Tone.start().then(() => {
+                if (isMusicPlaying) {
+                    backgroundMusic.stop();
+                    isMusicPlaying = false;
+                    document.getElementById('musicBtn').textContent = '🔇 Bật Nhạc';
+                    logMessage("Đã tắt nhạc nền.", 'info');
+                } else {
+                    const musicBtn = document.createElement('button');
+                    musicBtn.onclick = toggleMusic;
+                    musicBtn.id = 'musicBtn';
+                    musicBtn.textContent = '🎶 Đang Tải Nhạc...';
+                    musicBtn.disabled = true; 
+                    document.getElementById('musicBtn').remove();
+                    document.getElementById('gameControls').prepend(musicBtn);
+                    logMessage("Đang tải nhạc 'chiiik.mp3', vui lòng chờ...", 'info');
+                    
+                    backgroundMusic.load(MUSIC_URL).then(() => {
+                        backgroundMusic.start(0);
+                        isMusicPlaying = true;
+                        document.getElementById('musicBtn').textContent = '🔊 Tắt Nhạc';
+                        document.getElementById('musicBtn').disabled = false;
+                        logMessage("Đã tải xong và bật nhạc nền!", 'info');
+                    }).catch(e => {
+                        document.getElementById('musicBtn').textContent = '❌ Lỗi Nhạc (Thất bại)';
+                        document.getElementById('musicBtn').disabled = true;
+                        isMusicPlaying = false;
+                        logMessage("LỖI LỚN: Không thể tải file nhạc MP3. Vui lòng kiểm tra file.", 'error');
+                        console.error("Tone.js Load Error (Promise):", e);
+                    });
+                }
+            }).catch(e => {
+                logMessage("Lỗi khi khởi động âm thanh (cần tương tác người dùng).", 'error');
+                console.error("Tone.start Error:", e);
+            });
+        }
+
+
+        // --- LƯU TRỮ (FIREBASE / LOCAL) ---
+
+        async function saveGame() {
+            if (!window.userId) {
+                document.getElementById('saveLoadStatus').textContent = "Không thể lưu: Đang chờ Auth.";
+                return;
+            }
+            if (!game || !game.player || !game.player.name) {
+                document.getElementById('saveLoadStatus').textContent = "Không thể lưu: Chưa chọn nhân vật.";
+                return;
+            }
+
+            // Đảm bảo không lưu object enemy đang chiến đấu
+            const gameData = {
+                player: game.player,
+                quest: game.quest,
+                location: game.location,
+                bossDefeated: game.bossDefeated,
+                finalBossesDefeated: game.finalBossesDefeated || [], // Lưu trạng thái boss chính
+                playerStatusEffects: game.playerStatusEffects || { slowed: 0, focused: false, defending: false, stunned: 0, poisoned: 0 }, 
+                timestamp: new Date().toISOString()
+            };
+
+            const docRef = doc(window.db, "artifacts", appId, "users", window.userId, GAME_DATA_COLLECTION, "gameState");
+
+            try {
+                await setDoc(docRef, gameData);
+                document.getElementById('saveLoadStatus').textContent = "Đã lưu game thành công! " + new Date().toLocaleTimeString('vi-VN');
+            } catch (error) {
+                console.error("Lỗi khi lưu game:", error);
+                document.getElementById('saveLoadStatus').textContent = "LƯU THẤT BẠI. Xem console log.";
+            }
+        }
+
+        async function loadGame() {
+            if (!window.userId) return;
+            document.getElementById('displayUserId').textContent = window.userId.substring(0, 8) + '...';
+
+            const docRef = doc(window.db, "artifacts", appId, "users", window.userId, GAME_DATA_COLLECTION, "gameState");
+
+            try {
+                const docSnap = await getDoc(docRef);
+                if (docSnap.exists()) {
+                    const loadedData = docSnap.data();
+                    game = loadedData;
+                    if (game && game.player) {
+                        // Đảm bảo các thuộc tính cũ/mới tồn tại
+                        if (game.bossDefeated === undefined) game.bossDefeated = false;
+                        if (game.finalBossesDefeated === undefined) game.finalBossesDefeated = [];
+                        if (game.player.chicoin === undefined) game.player.chicoin = 0; 
+                        if (!game.player.inventory) game.player.inventory = {};
+                        
+                        // Khởi tạo/cập nhật hiệu ứng chiến thuật mới
+                        if (!game.playerStatusEffects) {
+                             game.playerStatusEffects = { slowed: 0, focused: false, defending: false, stunned: 0, poisoned: 0 }; 
+                        } else {
+                            if (game.playerStatusEffects.focused === undefined) game.playerStatusEffects.focused = false;
+                            if (game.playerStatusEffects.defending === undefined) game.playerStatusEffects.defending = false;
+                            if (game.playerStatusEffects.stunned === undefined) game.playerStatusEffects.stunned = 0;
+                            if (game.playerStatusEffects.poisoned === undefined) game.playerStatusEffects.poisoned = 0;
+                        }
+                        
+                        // Thêm vật phẩm mới nếu chưa có
+                        if (game.player.inventory['Bánh Bông Lan 🍰'] === undefined) {
+                            game.player.inventory['Bánh Bông Lan 🍰'] = 3; 
+                        }
+                        
+                        startGame(game.player.name, false);
+                        document.getElementById('saveLoadStatus').textContent = "Đã tải game thành công! " + new Date().toLocaleTimeString('vi-VN');
+                        logMessage(`Chào mừng trở lại, ${game.player.name}!`, 'info');
+                        updateControls();
+                        return true;
+                    }
+                }
+                document.getElementById('saveLoadStatus').textContent = "Không tìm thấy dữ liệu game đã lưu.";
+                return false;
+            } catch (error) {
+                console.error("Lỗi khi tải game:", error);
+                document.getElementById('saveLoadStatus').textContent = "TẢI THẤT BẠI. Xem console log.";
+                return false;
+            }
+        }
+
+        window.onFirebaseReady = async () => {
+            document.getElementById('saveLoadStatus').textContent = "Đã kết nối Firebase.";
+            await loadGame();
+        };
+
+        // --- HỆ THỐNG GAMEPLAY ---
+
+        function initGame(charName) {
+            const base = BASE_STATS[charName];
+            const player = {
+                name: charName,
+                icon: base.icon,
+                level: 1,
+                hp: base.hp,
+                maxHp: base.hp,
+                atk: base.atk,
+                def: base.def,
+                exp: 0,
+                nextLevelExp: 100,
+                chicoin: 50, 
+                weapon: 'Không',
+                inventory: {
+                    'Gậy Gỗ': 0,
+                    'Kiếm Sáng': 0,
+                    'Đá May Mắn': 0,
+                    'Nấm Hồi Phục': 0,
+                    'Vỏ Gai': 0,
+                    'Ngọc Trai': 0,
+                    'Đá Lửa': 0,
+                    'Thuốc Giải Độc': 0,
+                    'Lông Vũ Tốc Độ': 0,
+                    'Giáp Đá': 0,
+                    'Bùa Ma': 0,
+                    'Nanh Sắc': 0,
+                    'Cánh Bướm Phép': 0,
+                    'Sừng Quỷ': 0,
+                    'Hào Quang Vô Cực': 0,
+                    'Bánh Bông Lan 🍰': 3 
+                }
+            };
+
+            game = {
+                player: player,
+                quest: INITIAL_QUEST,
+                location: 'Home',
+                bossDefeated: false,
+                finalBossesDefeated: [],
+                playerStatusEffects: {
+                    slowed: 0, // Số lượt còn lại bị chậm chạp
+                    focused: false, // Tập trung cho lượt đánh tiếp theo
+                    defending: false, // Đang phòng thủ cho lượt quái đánh tiếp theo
+                    stunned: 0, // Bị choáng (không hành động được)
+                    poisoned: 0 // Bị trúng độc (mất HP mỗi lượt)
+                }
+            };
+        }
+
+        function startGame(charName, isNewGame = true) {
+            if (isNewGame) {
+                initGame(charName);
+                logMessage(`Bạn đã chọn ${charName}. Bắt đầu cuộc phiêu lưu!`, 'info');
+                // Thêm cốt truyện mới
+                logMessage(`💦 Một cơn 'Mưa Bí Ẩn' đã khiến các quái vật trở nên hung hăng và cản trở việc săn lùng Chicoin!`, 'message-error');
+                logMessage(`💰 Bạn nhận được 💰 ${game.player.chicoin} Chicoin khởi đầu!`, 'message-coin');
+                logMessage(`Nhiệm vụ đầu tiên: ${game.quest.description}`, 'quest');
+            }
+
+            // Chuyển sang màn hình chính
+            switchView('main');
+            updateUI();
+            updateControls();
+            saveGame(); // Lưu game ngay khi bắt đầu/tải
+        }
+        
+        function switchView(viewName) {
+            currentView = viewName;
+            document.getElementById('charSelection').style.display = 'none';
+            document.getElementById('mainGameView').style.display = 'none';
+            document.getElementById('shopView').style.display = 'none';
+            document.getElementById('finalBossView').style.display = 'none';
+            document.getElementById('enemy-status').style.display = 'none'; // Ẩn trạng thái địch
+
+            if (viewName === 'selection') {
+                 document.getElementById('charSelection').style.display = 'block';
+                 document.getElementById('currencyDisplay').style.display = 'none';
+            } else if (viewName === 'main') {
+                document.getElementById('mainGameView').style.display = 'block';
+                document.getElementById('currencyDisplay').style.display = 'flex';
+            } else if (viewName === 'shop') {
+                document.getElementById('shopView').style.display = 'block';
+                document.getElementById('currencyDisplay').style.display = 'flex';
+                renderShop(); // Tải nội dung cửa hàng
+            } else if (viewName === 'finalBoss') {
+                document.getElementById('finalBossView').style.display = 'block';
+                document.getElementById('currencyDisplay').style.display = 'flex';
+                renderFinalBosses();
+            }
+            updateControls();
+        }
+
+        function selectCharacter(charName) {
+            // Tắt/Bật màu cho thẻ đã chọn
+            document.querySelectorAll('.character-card').forEach(card => {
+                card.classList.remove('selected');
+            });
+            document.querySelector(`.character-card[data-char="${charName}"]`).classList.add('selected');
+
+            // Bắt đầu game
+            startGame(charName, true);
+        }
+
+        function updateUI() {
+            if (!game || !game.player) return;
+
+            const p = game.player;
+            // Xử lý vũ khí 
+            const w = WEAPONS[p.weapon] || WEAPONS['Không'];
+            let totalAtk = p.atk + w.atk;
+            let totalDef = p.def + w.def;
+
+            // Xử lý hiệu ứng trạng thái
+            let statusText = 'Khỏe mạnh';
+            
+            // Giảm ATK 50% khi Slowed
+            if (game.playerStatusEffects.slowed > 0) {
+                totalAtk = Math.floor(totalAtk * 0.5); 
+                statusText = `Chậm Chạp (-50% ATK, ${game.playerStatusEffects.slowed} lượt)`;
+            }
+            // Không hành động được khi Stunned
+            if (game.playerStatusEffects.stunned > 0) {
+                 statusText += (statusText === 'Khỏe mạnh' ? '' : ', ') + `Choáng (Không hành động, ${game.playerStatusEffects.stunned} lượt)`;
+            }
+            // Sát thương độc
+            if (game.playerStatusEffects.poisoned > 0) {
+                 statusText += (statusText === 'Khỏe mạnh' ? '' : ', ') + `Trúng Độc (-5 HP/lượt, ${game.playerStatusEffects.poisoned} lượt)`;
+            }
+
+            if (game.playerStatusEffects.focused) {
+                statusText += (statusText === 'Khỏe mạnh' ? '' : ', ') + 'Tập Trung (+50% ATK)';
+            }
+            if (game.playerStatusEffects.defending) {
+                statusText += (statusText === 'Khỏe mạnh' ? '' : ', ') + 'Phòng Thủ (+100% DEF)';
+            }
+            
+            if (statusText === 'Khỏe mạnh') {
+                 document.getElementById('player-effects').style.color = 'green';
+                 statusText = 'Không';
+            } else {
+                 document.getElementById('player-effects').style.color = '#008888';
+            }
+
+
+            document.getElementById('player-name').textContent = `${p.icon} ${p.name}`;
+            document.getElementById('player-level').textContent = p.level;
+            document.getElementById('player-hp').textContent = `${p.hp}/${p.maxHp}`;
+            document.getElementById('player-atk').textContent = `${totalAtk} (${p.atk} + ${w.atk})`;
+            document.getElementById('player-def').textContent = `${totalDef} (${p.def} + ${w.def})`;
+            document.getElementById('player-exp').textContent = `${p.exp}/${p.nextLevelExp}`;
+            document.getElementById('player-weapon').textContent = p.weapon;
+            document.getElementById('player-chicoin').textContent = p.chicoin.toLocaleString('vi-VN'); 
+            document.getElementById('player-effects').textContent = statusText;
+
+            // Cập nhật trạng thái Enemy
+            const enemyStatusDiv = document.getElementById('enemy-status');
+            if (isInFight && currentEnemy) {
+                enemyStatusDiv.style.display = 'block';
+                const enemyType = currentEnemy.isBoss 
+                    ? currentEnemy.isFinalBoss ? 'Boss' : 'Mini Boss'
+                    : 'Quái Thường';
+                
+                document.getElementById('enemy-name-display').textContent = `Kẻ Thù (${enemyType}): ${currentEnemy.icon} ${currentEnemy.name.split(' ')[0]}`;
+                document.getElementById('enemy-hp-display').textContent = `HP: ${Math.max(0, currentEnemy.hp)}/${currentEnemy.maxHp}`;
+            } else {
+                enemyStatusDiv.style.display = 'none';
+            }
+
+            // Cập nhật Inventory
+            const invDiv = document.getElementById('player-inventory');
+            invDiv.innerHTML = '';
+            for (const item in p.inventory) {
+                // Chỉ hiển thị vật phẩm có số lượng > 0
+                if (p.inventory[item] > 0) {
+                    const itemDiv = document.createElement('div');
+                    itemDiv.className = 'inventory-item';
+                    itemDiv.textContent = `${item} (x${p.inventory[item]})`;
+                    invDiv.appendChild(itemDiv);
+                }
+            }
+        }
+
+        function updateControls() {
+            const controlsDiv = document.getElementById('gameControls');
+            controlsDiv.innerHTML = '';
+
+            // Luôn có nút Nhạc
+            const musicButton = document.createElement('button');
+            musicButton.onclick = toggleMusic;
+            musicButton.id = 'musicBtn';
+            musicButton.textContent = isMusicPlaying ? '🔊 Tắt Nhạc' : '🔇 Bật Nhạc';
+            controlsDiv.appendChild(musicButton);
+            
+            // Nếu đang ở màn hình Shop hoặc Boss Chính, chỉ hiển thị nút Back
+            if (currentView === 'shop' || currentView === 'finalBoss') {
+                const backBtn = document.createElement('button');
+                backBtn.textContent = '◀️ Trở về Game';
+                backBtn.onclick = () => switchView('main');
+                backBtn.style.backgroundColor = 'var(--hachiware-blue)';
+                controlsDiv.appendChild(backBtn);
+                return; 
+            }
+
+            // Nếu đang ở màn hình chính
+            if (currentView === 'main') {
+                
+                // --- KHI ĐANG TRONG TRẬN ĐẤU (Turn-based) ---
+                if (isInFight && currentEnemy && game.player.hp > 0) {
+                    // Khu vực hành động chiến đấu
+                    const combatActionsDiv = document.createElement('div');
+                    combatActionsDiv.className = 'combat-actions';
+                    
+                    const enemyName = currentEnemy.icon + ' ' + currentEnemy.name.split(' ')[0];
+                    
+                    // Nút TẤN CÔNG
+                    const attackBtn = document.createElement('button');
+                    attackBtn.textContent = `⚔️ TẤN CÔNG ${enemyName} (Lượt)`;
+                    // Vô hiệu hóa khi bị choáng
+                    attackBtn.disabled = game.playerStatusEffects.stunned > 0;
+                    if (game.playerStatusEffects.stunned > 0) {
+                        attackBtn.textContent = `😵 Choáng (${game.playerStatusEffects.stunned} lượt)`;
+                    }
+
+                    attackBtn.onclick = () => takeTurn('attack'); 
+                    attackBtn.className = 'attack-btn';
+                    combatActionsDiv.appendChild(attackBtn);
+
+                    // 2. Nút TẬP TRUNG (Focus)
+                    const focusBtn = document.createElement('button');
+                    focusBtn.textContent = '🎯 TẬP TRUNG (+50% ATK)';
+                    focusBtn.disabled = game.playerStatusEffects.focused || game.playerStatusEffects.defending || game.playerStatusEffects.stunned > 0;
+                    focusBtn.onclick = () => takeTurn('focus');
+                    combatActionsDiv.appendChild(focusBtn);
+                    
+                    // 3. Nút PHÒNG THỦ (Defend)
+                    const defendBtn = document.createElement('button');
+                    defendBtn.textContent = '🛡️ PHÒNG THỦ (+100% DEF)';
+                    defendBtn.disabled = game.playerStatusEffects.focused || game.playerStatusEffects.defending || game.playerStatusEffects.stunned > 0;
+                    defendBtn.onclick = () => takeTurn('defend');
+                    combatActionsDiv.appendChild(defendBtn);
+                    
+                    // 4. Nút Ăn BÁNH/FOOD 
+                    const cakeCount = game.player.inventory['Bánh Bông Lan 🍰'] || 0;
+                    if (cakeCount > 0) {
+                        const eatCakeBtn = document.createElement('button');
+                        eatCakeBtn.textContent = `🍰 Ăn Bánh (x${cakeCount})`;
+                        eatCakeBtn.disabled = cakeUsedInFight;
+                        eatCakeBtn.onclick = eatCake;
+                        eatCakeBtn.style.backgroundColor = '#fca5a5';
+                        combatActionsDiv.appendChild(eatCakeBtn);
+                    }
+                    
+                    controlsDiv.appendChild(combatActionsDiv);
+                    
+                    return; 
+                }
+                // --- KHI Ở NGOÀI TRẬN ĐẤU ---
+
+                // Nút Cửa Hàng
+                const shopBtn = document.createElement('button');
+                shopBtn.textContent = '🛍️ Cửa Hàng';
+                shopBtn.onclick = () => switchView('shop');
+                shopBtn.style.backgroundColor = 'var(--usagi-yellow)';
+                controlsDiv.appendChild(shopBtn);
+                
+                // Nút Nghỉ ngơi (Hồi máu - chỉ hiển thị ngoài trận)
+                if (game.player.hp < game.player.maxHp || game.playerStatusEffects.poisoned > 0) {
+                    const restBtn = document.createElement('button');
+                    restBtn.textContent = '🏠 Nghỉ Ngơi (Hồi HP & Giải Độc)';
+                    restBtn.onclick = rest;
+                    controlsDiv.appendChild(restBtn);
+                }
+
+                // Nút Trang bị (nếu có vũ khí)
+                for (const item in WEAPONS) {
+                    if (item !== 'Không' && game.player.inventory[item] > 0 && item !== game.player.weapon) {
+                        const equipBtn = document.createElement('button');
+                        equipBtn.textContent = `⚔️ Trang bị ${item.replace('⚔️', '').trim()}`;
+                        equipBtn.onclick = () => equipWeapon(item);
+                        controlsDiv.appendChild(equipBtn);
+                    }
+                }
+
+                // Nút Hành động chính (NÚT ĐÁNH)
+                if (game.quest.active) {
+                    const questBtn = document.createElement('button');
+                    questBtn.textContent = `🔍 Nhiệm vụ: ${game.quest.currentCount}/${game.quest.requiredCount} Quái`;
+                    questBtn.onclick = startQuestFight;
+                    questBtn.style.backgroundColor = '#bbf7d0'; 
+                    controlsDiv.appendChild(questBtn);
+                } else {
+                    // Đánh Mini-Boss ngẫu nhiên
+                    const bossBtn = document.createElement('button');
+                    bossBtn.textContent = `⚔️ Khám phá & Chiến đấu Mini Boss!`;
+                    bossBtn.onclick = startRandomBossFight;
+                    bossBtn.style.backgroundColor = '#fca5a5'; 
+                    controlsDiv.appendChild(bossBtn);
+                    
+                    // Boss Chính
+                    const finalBossBtn = document.createElement('button');
+                    finalBossBtn.textContent = `🔥 Thử Thách Boss Chính`;
+                    finalBossBtn.onclick = () => switchView('finalBoss');
+                    finalBossBtn.style.backgroundColor = '#9333ea'; 
+                    finalBossBtn.style.color = 'white';
+                    controlsDiv.appendChild(finalBossBtn);
+                }
+
+                // Nút Lưu game thủ công 
+                const manualSaveBtn = document.createElement('button');
+                manualSaveBtn.textContent = '💾 Lưu Game';
+                manualSaveBtn.onclick = saveGame;
+                controlsDiv.appendChild(manualSaveBtn);
+            }
+        }
+
+        function logMessage(message, type = 'normal') {
+            const logArea = document.getElementById('gameLog');
+            const p = document.createElement('p');
+            p.textContent = `[${new Date().toLocaleTimeString('vi-VN')}] ${message}`;
+            p.className = `message-${type}`;
+            logArea.prepend(p);
+            // Giới hạn số lượng log
+            while (logArea.children.length > 50) {
+                logArea.removeChild(logArea.lastChild);
+            }
+        }
+
+        function equipWeapon(weaponName) {
+            // Đảm bảo chỉ số lượng lớn hơn 0 mới trang bị được
+            if ((game.player.inventory[weaponName] > 0 || weaponName === 'Không') && WEAPONS[weaponName]) {
+                const oldWeapon = game.player.weapon;
+                game.player.weapon = weaponName;
+                const newAtk = WEAPONS[weaponName].atk;
+                logMessage(`${game.player.name} đã trang bị ${weaponName}. (ATK +${newAtk})`, 'info');
+                updateUI();
+                updateControls();
+                saveGame();
+            } else {
+                logMessage(`Không thể trang bị ${weaponName}.`, 'error');
+            }
+        }
+
+        function rest() {
+            if (game.player.hp === game.player.maxHp && game.playerStatusEffects.poisoned === 0) {
+                logMessage(`${game.player.name} đã khỏe mạnh và không bị trúng độc!`, 'info');
+                return;
+            }
+            
+            const healAmount = Math.floor(game.player.maxHp * 0.5);
+            game.player.hp = Math.min(game.player.hp + healAmount, game.player.maxHp);
+            logMessage(`Đã nghỉ ngơi và hồi ${healAmount} HP. HP hiện tại: ${game.player.hp}/${game.player.maxHp}`, 'info');
+
+            // Giải độc
+            if (game.playerStatusEffects.poisoned > 0) {
+                game.playerStatusEffects.poisoned = 0;
+                logMessage(`🍵 Đã giải độc thành công!`, 'message-info');
+            }
+            
+            updateUI();
+            saveGame();
+        }
+
+        function useConsumable(itemName, healAmount) {
+            const p = game.player;
+            if (p.inventory[itemName] <= 0) {
+                logMessage(`Bạn không còn ${itemName} nào!`, 'error');
+                return false;
+            }
+            if (p.hp === p.maxHp) {
+                 logMessage("HP đã đầy, không cần dùng vật phẩm hồi máu!", 'warn');
+                 return false;
+            }
+
+            // Sử dụng item
+            p.inventory[itemName]--;
+            
+            p.hp = Math.min(p.hp + healAmount, p.maxHp);
+            
+            logMessage(`✨ ${p.name} dùng ${itemName} và hồi ${healAmount} HP! HP hiện tại: ${p.hp}/${p.maxHp}`, 'message-info');
+            
+            updateUI();
+            updateControls(); 
+            saveGame();
+            return true;
+        }
+
+        function eatCake() {
+            if (!isInFight) {
+                logMessage("Bạn chỉ có thể ăn bánh khi đang trong trận chiến!", 'warn');
+                return;
+            }
+            if (cakeUsedInFight) {
+                logMessage("Bạn đã sử dụng Bánh Bông Lan trong trận này rồi!", 'warn');
+                return;
+            }
+            if (useConsumable('Bánh Bông Lan 🍰', CAKE_HEAL_AMOUNT)) {
+                 cakeUsedInFight = true; // Chỉ đánh dấu đã dùng nếu việc hồi máu thành công
+                 updateControls(); 
+            }
+        }
+
+
+        function gainExp(exp) {
+            game.player.exp += exp;
+            logMessage(`+${exp} EXP!`, 'info');
+
+            while (game.player.exp >= game.player.nextLevelExp) {
+                levelUp();
+            }
+            updateUI();
+            saveGame();
+        }
+        
+        function gainChicoin(amount) {
+             game.player.chicoin += amount;
+             logMessage(`+💰 ${amount} Chicoin!`, 'message-coin');
+             updateUI();
+             saveGame();
+        }
+
+        function levelUp() {
+            const p = game.player;
+            p.level++;
+            p.exp -= p.nextLevelExp; // Giữ lại EXP thừa
+            p.nextLevelExp = Math.floor(p.nextLevelExp * 1.5); // Tăng EXP yêu cầu
+            p.maxHp += 15;
+            p.hp = p.maxHp; // Hồi đầy máu
+            p.atk += 3;
+            p.def += 2;
+            logMessage(`🎉 CHÚC MỪNG! ${p.name} đã thăng lên Cấp ${p.level}!`, 'message-quest');
+            logMessage(`HP +15, ATK +3, DEF +2.`, 'message-quest');
+        }
+
+        function lootItem(item) {
+            if (game.player.inventory[item] !== undefined) {
+                game.player.inventory[item]++;
+                logMessage(`Tìm thấy 1x ${item} trong rương!`, 'info');
+            } else {
+                // Tạo item mới nếu chưa có
+                game.player.inventory[item] = 1;
+                logMessage(`Nhận được Vật phẩm đặc biệt: ${item}!`, 'info');
+            }
+        }
+
+        // --- CÁC HOẠT ĐỘNG CHIẾN ĐẤU ---
+
+        function calculateDamage(attacker, defender, isPlayer = false) {
+            // Lấy chỉ số ATK của người tấn công (có tính vũ khí)
+            const attackerWeapon = attacker.weapon || 'Không'; 
+            let attackerAtk = attacker.atk + (WEAPONS[attackerWeapon] ? WEAPONS[attackerWeapon].atk : 0);
+            
+            // Lấy chỉ số DEF của người phòng thủ (có tính vũ khí)
+            const defenderWeapon = defender.weapon || 'Không';
+            let defenderDef = defender.def + (WEAPONS[defenderWeapon] ? WEAPONS[defenderWeapon].def : 0);
+            
+            // --- Xử lý hiệu ứng Tấn công của Player ---
+            if (isPlayer) {
+                // Chậm Chạp
+                if (game.playerStatusEffects.slowed > 0) {
+                     attackerAtk = Math.floor(attackerAtk * 0.5);
+                }
+                // Tập Trung
+                if (game.playerStatusEffects.focused) {
+                    attackerAtk = Math.floor(attackerAtk * COMBAT_EFFECTS.FOCUS_DAMAGE_MULTIPLIER);
+                }
+            }
+            
+            // --- Xử lý hiệu ứng Phòng thủ của Player ---
+            if (!isPlayer) { // Quái tấn công, Player là defender
+                // Phòng Thủ
+                if (game.playerStatusEffects.defending) { 
+                    defenderDef = Math.floor(defenderDef * COMBAT_EFFECTS.DEFEND_DEFENSE_MULTIPLIER);
+                }
+                // Boss Hồn Ma Quỷ Quyệt (Bỏ qua DEF)
+                if (attacker.isBoss && attacker.ignoreDef) {
+                     defenderDef = Math.floor(defenderDef * (1 - attacker.ignoreDef)); // Bỏ qua 50% DEF
+                }
+            }
+            
+            // Công thức sát thương cố định: ATK - DEF/2
+            let damage = Math.max(1, attackerAtk - Math.floor(defenderDef / 2));
+            
+            // Thêm ngẫu nhiên 0-20% sát thương
+            damage = Math.floor(damage * (1 + Math.random() * 0.2));
+
+            return damage;
+        }
+
+        // Hàm mới để dừng trận đấu
+        function stopFight() {
+            isInFight = false;
+            currentEnemy = null;
+            bossTurnCount = 0; // Reset
+            // Xóa hiệu ứng chiến thuật, giữ lại hiệu ứng tiêu cực kéo dài (slowed, poisoned, stunned)
+            game.playerStatusEffects.focused = false;
+            game.playerStatusEffects.defending = false;
+            
+            updateControls();
+            updateUI();
+            saveGame();
+        }
+
+        // Hàm chính xử lý lượt đánh (CHỈ XẢY RA KHI NGƯỜI CHƠI NHẤN NÚT)
+        function takeTurn(action) {
+            const enemy = currentEnemy;
+            if (!isInFight || !enemy || game.player.hp <= 0 || enemy.hp <= 0) {
+                stopFight(); 
+                return;
+            }
+            
+            // Xử lý hiệu ứng tiêu cực trước khi người chơi hành động
+            processStatusEffects(true); // Player pre-turn effects
+
+            // Nếu người chơi bị Choáng, bỏ qua lượt hành động của Player
+            if (game.playerStatusEffects.stunned > 0) {
+                logMessage(`😵 ${game.player.name} bị Choáng và không thể hành động!`, 'message-error');
+                // Nếu bị choáng, hành động tiếp theo phải là lượt của quái vật
+                processEnemyTurn();
+                return;
+            }
+
+            const p = game.player;
+            const enemyName = enemy.icon + ' ' + enemy.name.split(' ')[0];
+            
+            // Phát câu cửa miệng
+            logMessage(`${p.name}: "${CATCHPHRASES[p.name]}"`, 'message-info');
+
+            // --- HÀNH ĐỘNG CỦA NGƯỜI CHƠI ---
+            
+            if (action === 'focus') {
+                game.playerStatusEffects.focused = true;
+                game.playerStatusEffects.defending = false; 
+                logMessage(`🎯 ${p.name} Tập Trung! Sát thương lượt tiếp theo sẽ tăng 50%!`, 'message-effect');
+                
+            } else if (action === 'defend') {
+                game.playerStatusEffects.defending = true;
+                game.playerStatusEffects.focused = false; 
+                logMessage(`🛡️ ${p.name} Phòng Thủ! Phòng thủ cho lượt đánh sắp tới tăng 100%!`, 'message-effect');
+                
+            } else if (action === 'attack') {
+                // 1. Lượt chơi tấn công (Player -> Enemy)
+                
+                let playerDamage = calculateDamage(p, enemy, true); 
+                let hit = true;
+
+                // Xử lý né tránh của Enemy
+                if (enemy.evasion && Math.random() < enemy.evasion) {
+                    logMessage(`❌ ${enemyName} đã né đòn tấn công của ${p.name}!`, 'warn');
+                    hit = false;
+                }
+                
+                if (hit) {
+                    enemy.hp -= playerDamage;
+                    logMessage(`${p.name} tấn công! 💥 Gây ${playerDamage} sát thương lên ${enemyName}. (HP còn: ${Math.max(0, enemy.hp)})`, 'message-damage');
+
+                    // Xử lý Phản Sát Thương
+                    if (enemy.reflect) {
+                        const reflectedDamage = Math.max(1, Math.floor(playerDamage * enemy.reflect));
+                        p.hp -= reflectedDamage;
+                        logMessage(`🌊 ${enemyName} phản lại! 💔 ${p.name} chịu ${reflectedDamage} sát thương phản hồi.`, 'message-error');
+                    }
+                }
+                
+                // Sau khi đánh, xóa hiệu ứng Focused
+                game.playerStatusEffects.focused = false;
+            }
+
+            // Kiểm tra Enemy chết SAU LƯỢT ĐÁNH CỦA PLAYER
+            if (enemy.hp <= 0) {
+                endFight(true, enemy);
+                return;
+            }
+            
+            // --- CHUYỂN SANG LƯỢT ENEMY (bắt đầu quá trình tấn công) ---
+            processEnemyTurn();
+        }
+
+        function processStatusEffects(preTurn) {
+             const p = game.player;
+             // Giảm thời gian hiệu ứng 
+             if (game.playerStatusEffects.slowed > 0) game.playerStatusEffects.slowed--;
+             if (game.playerStatusEffects.stunned > 0) game.playerStatusEffects.stunned--;
+             
+             // Xử lý sát thương độc (người chơi)
+             if (game.playerStatusEffects.poisoned > 0) {
+                game.playerStatusEffects.poisoned--;
+                const poisonDamage = 5;
+                p.hp -= poisonDamage;
+                logMessage(`☣️ ${p.name} mất ${poisonDamage} HP vì Trúng Độc.`, 'message-error');
+             }
+
+             // Xử lý hồi máu Boss (Boss Bướm)
+             if (currentEnemy && currentEnemy.isFinalBoss && currentEnemy.healTurn && preTurn === false) { // Chỉ kiểm tra sau khi player đã đánh xong
+                 bossTurnCount++;
+                 if (bossTurnCount % currentEnemy.healTurn === 0) {
+                     const heal = currentEnemy.healAmount;
+                     currentEnemy.hp = Math.min(currentEnemy.hp + heal, currentEnemy.maxHp);
+                     logMessage(`🦋 ${currentEnemy.icon} ${currentEnemy.name} hồi ${heal} HP!`, 'message-effect');
+                 }
+             }
+
+        }
+
+        function processEnemyTurn() {
+            const enemy = currentEnemy;
+            const p = game.player;
+            const enemyName = enemy.icon + ' ' + enemy.name.split(' ')[0];
+
+            // Kiểm tra Player chết do phản sát thương/độc (trước khi quái đánh)
+            if (p.hp <= 0) {
+                endFight(false, enemy);
+                return;
+            }
+
+            // --- XỬ LÝ MINI BOSS NỘI TẠI (Trước khi tấn công) ---
+            let attackCount = 1;
+            // Boss Chim Khổng Lồ (Đánh 2 lần)
+            if (enemy.doubleAttack && Math.random() < enemy.doubleAttack) {
+                 attackCount = 2;
+                 logMessage(`🦅 ${enemyName} Tấn công hai lần!`, 'message-warn');
+            }
+            // Boss Heo Rừng Cơn Giận (Tăng ATK khi HP thấp)
+            if (enemy.rage && enemy.hp / enemy.maxHp <= enemy.rage) {
+                enemy.atk = Math.floor(enemy.baseAtk * 1.5); // Tăng 50% ATK
+                logMessage(`🐗 ${enemyName} nổi cơn thịnh nộ! ATK tăng!`, 'message-error');
+            }
+            // Boss Chính Thiên Thần Sa Ngã (Đã xử lý ở endFight)
+
+            // --- BẮT ĐẦU TẤN CÔNG ---
+            for (let i = 0; i < attackCount; i++) {
+                if (p.hp <= 0) break; // Thoát nếu người chơi chết sau cú đánh đầu tiên
+                
+                const enemyDamage = calculateDamage(enemy, p, false); 
+                p.hp -= enemyDamage;
+                logMessage(`${enemyName} tấn công! 💔 ${p.name} chịu ${enemyDamage} sát thương. (HP còn: ${Math.max(0, p.hp)})`, 'message-damage');
+
+                // Xử lý hiệu ứng Choáng của Boss Quái Vật Tí Hon
+                if (enemy.isFinalBoss && enemy.stunChance && Math.random() < enemy.stunChance && game.playerStatusEffects.stunned === 0) {
+                    game.playerStatusEffects.stunned = 1; 
+                    logMessage(`👹 ${enemyName} gây hiệu ứng Choáng! (${p.name} mất 1 lượt)`, 'message-effect');
+                }
+                
+                // Xử lý hiệu ứng Độc của Boss Bò Sát Độc
+                if (enemy.poison && Math.random() < enemy.poison && game.playerStatusEffects.poisoned === 0) {
+                    game.playerStatusEffects.poisoned = 3; // Kéo dài 3 lượt
+                    logMessage(`🦖 ${enemyName} gieo Độc! (${p.name} mất HP trong 3 lượt)`, 'message-error');
+                }
+                
+                // Xử lý giảm DEF vĩnh viễn của Boss Chính Thiên Thần Sa Ngã
+                if (enemy.isFinalBoss && enemy.defDebuff && Math.random() < enemy.defDebuff) {
+                    p.def = Math.max(1, p.def - 2); // Giảm 2 DEF
+                    p.maxHp = Math.max(p.maxHp, p.hp); // Nếu HP bị giảm dưới 0, thì sẽ chết
+                    logMessage(`😇 ${enemyName} làm suy giảm sức mạnh! DEF vĩnh viễn của ${p.name} giảm -2!`, 'message-error');
+                }
+            }
+            
+            // Xóa hiệu ứng Defending sau khi bị quái đánh
+            game.playerStatusEffects.defending = false;
+
+            // Kiểm tra Player chết SAU LƯỢT ĐÁNH CỦA ENEMY
+            if (p.hp <= 0) {
+                endFight(false, enemy);
+                return;
+            }
+            
+            // Cập nhật giao diện sau khi hoàn thành 1 lượt
+            updateUI();
+            updateControls();
+        }
+
+        
+        // Hàm mới để xử lý kết thúc trận đấu (Thắng hoặc Thua)
+        function endFight(playerWon, enemy) {
+             const p = game.player;
+             const enemyName = enemy.icon + ' ' + enemy.name.split(' ')[0];
+                
+             if (playerWon) {
+                logMessage(`✅ ${enemyName} đã bị đánh bại tại ${enemy.location || 'Làng'}!`, 'message-info');
+                
+                // Thu thập Chicoin
+                const coinDrop = Math.floor(Math.random() * (enemy.dropCoin.max - enemy.dropCoin.min + 1)) + enemy.dropCoin.min;
+                gainChicoin(coinDrop);
+
+                if (enemy.isBoss) {
+                    lootItem(enemy.item);
+                    gainExp(enemy.exp);
+                    
+                    if (enemy.isFinalBoss) {
+                         game.finalBossesDefeated.push(enemy.name);
+                         logMessage(`👑 CHÚC MỪNG! Bạn đã đánh bại Boss Chính ${enemy.name}!`, 'message-quest');
+                    } else {
+                         game.bossDefeated = true; // Chỉ để mở khóa Boss Chính (nếu cần)
+                    }
+                } else {
+                    // Cập nhật nhiệm vụ (đánh quái thường)
+                    if (game.quest.active) {
+                         game.quest.currentCount++;
+                         const progress = `${game.quest.currentCount}/${game.quest.requiredCount}`;
+                         logMessage(`Tiến độ Nhiệm vụ: ${progress}`, 'quest');
+                        if (game.quest.currentCount >= game.quest.requiredCount) {
+                            completeQuest();
+                        }
+                    }
+                    gainExp(enemy.exp); 
+                }
+             } else {
+                logMessage(`💀 ${p.name} đã ngã xuống trước ${enemyName}... Cuộc phiêu lưu kết thúc.`, 'message-error');
+                logMessage(`Vui lòng chọn nhân vật mới để chơi lại!`, 'message-error');
+                
+                // Tự động khởi động lại game về màn hình chọn nhân vật
+                game = null; 
+                switchView('selection');
+             }
+
+             stopFight(); // Dừng trạng thái chiến đấu và cập nhật điều khiển/giao diện
+        }
+
+
+        // Bắt đầu chiến đấu Quái thường (Ngẫu nhiên trong 20 loại)
+        function startQuestFight() {
+            if (game.quest.currentCount >= game.quest.requiredCount) {
+                 logMessage("Nhiệm vụ đã hoàn thành. Hãy nhận phần thưởng!", 'warn');
+                 return;
+            }
+            if (isInFight) {
+                 logMessage("Bạn đang trong trận chiến khác!", 'warn');
+                 return;
+            }
+
+            const enemyKeys = Object.keys(NORMAL_ENEMY_POOL);
+            const randomEnemyKey = enemyKeys[Math.floor(Math.random() * enemyKeys.length)];
+            const config = NORMAL_ENEMY_POOL[randomEnemyKey];
+
+            // Thiết lập currentEnemy (Không phải Boss)
+            currentEnemy = { 
+                ...config, 
+                name: randomEnemyKey,
+                maxHp: config.hp, 
+                hp: config.hp, 
+                isBoss: false,
+                isFinalBoss: false,
+                location: 'Village',
+                evasion: config.evasion || 0,
+                // Các hiệu ứng khác có thể được thêm vào đây
+            };
+            
+            isInFight = true;
+            cakeUsedInFight = false;
+            
+            logMessage(`Bắt đầu chiến đấu với Quái Thường: ${currentEnemy.icon} ${currentEnemy.name}!`, 'message-warn');
+            logMessage(`Đặc điểm: ${config.special}`, 'message-effect');
+            
+            updateUI();
+            updateControls();
+        }
+
+        // Bắt đầu chiến đấu Mini Boss Ngẫu Nhiên
+        function startRandomBossFight() {
+            if (isInFight) {
+                 logMessage("Bạn đang trong trận chiến khác!", 'warn');
+                 return;
+            }
+            
+            const bossKeys = Object.keys(MINI_BOSS_POOL);
+            const randomBossKey = bossKeys[Math.floor(Math.random() * bossKeys.length)];
+            const bossConfig = MINI_BOSS_POOL[randomBossKey];
+
+            // Thiết lập currentEnemy (Là Mini Boss)
+            currentEnemy = {
+                ...bossConfig,
+                name: randomBossKey,
+                type: randomBossKey, // Dùng để xác định hiệu ứng
+                maxHp: bossConfig.hp,
+                hp: bossConfig.hp,
+                isBoss: true,
+                isFinalBoss: false,
+                baseAtk: bossConfig.atk, // Lưu ATK gốc cho Boss Heo Rừng
+                evasion: bossConfig.evasion || 0,
+                reflect: bossConfig.reflect || 0,
+                poison: bossConfig.poison || 0,
+                doubleAttack: bossConfig.doubleAttack || 0,
+                ignoreDef: bossConfig.ignoreDef || 0,
+                rage: bossConfig.rage || 0
+            };
+
+            isInFight = true;
+            cakeUsedInFight = false;
+
+            logMessage(`⚔️ Đối đầu với Mini Boss ${currentEnemy.icon} ${currentEnemy.name} tại ${currentEnemy.location}! Cẩn thận!`, 'message-error');
+            logMessage(`Đặc điểm: ${bossConfig.special}`, 'message-effect');
+            
+            updateUI();
+            updateControls();
+        }
+
+        // Bắt đầu chiến đấu Boss Chính (Từ màn hình Final Boss)
+        function startFinalBossFight(bossName) {
+            if (isInFight) {
+                 logMessage("Bạn đang trong trận chiến khác!", 'warn');
+                 return;
+            }
+            
+            const bossConfig = FINAL_BOSS_POOL[bossName];
+            if (!bossConfig) {
+                 logMessage("LỖI: Không tìm thấy Boss Chính này.", 'error');
+                 return;
+            }
+
+            // Thiết lập currentEnemy (Là Final Boss)
+            currentEnemy = {
+                ...bossConfig,
+                name: bossName,
+                type: bossName, 
+                maxHp: bossConfig.hp,
+                hp: bossConfig.hp,
+                isBoss: true,
+                isFinalBoss: true,
+                baseAtk: bossConfig.atk, 
+                healTurn: bossConfig.healTurn || 0,
+                healAmount: bossConfig.healAmount || 0,
+                stunChance: bossConfig.stunChance || 0,
+                defDebuff: bossConfig.defDebuff || 0,
+                dropCoin: bossConfig.dropCoin
+            };
+            
+            bossTurnCount = 0; // Reset lượt boss
+
+            isInFight = true;
+            cakeUsedInFight = false;
+            switchView('main'); // Chuyển về màn hình chính để chiến đấu
+
+            logMessage(`🔥 CHÍNH THỨC: Đối đầu với BOSS CHÍNH ${currentEnemy.icon} ${currentEnemy.name}!`, 'message-error');
+            logMessage(`Đặc điểm: ${bossConfig.special}`, 'message-error');
+            
+            updateUI();
+            updateControls();
+        }
+
+        function completeQuest() {
+            const reward = game.quest.reward;
+            logMessage(`🏆 NHIỆM VỤ HOÀN THÀNH: ${game.quest.name}!`, 'message-quest');
+            
+            if (reward.item) {
+                lootItem(reward.item);
+                if (reward.item === 'Gậy Gỗ' && game.player.weapon === 'Không') {
+                    equipWeapon('Gậy Gỗ');
+                }
+            }
+
+            game.quest.active = false;
+            logMessage(`Bây giờ bạn đã sẵn sàng khám phá và đối đầu với các Mini Boss ở nhiều khu vực khác nhau!`, 'message-error');
+            updateControls();
+            saveGame();
+        }
+        
+        // --- HỆ THỐNG SHOP ---
+
+        function renderShop() {
+            const foodGrid = document.getElementById('foodShopGrid');
+            const weaponGrid = document.getElementById('weaponShopGrid');
+            foodGrid.innerHTML = '';
+            weaponGrid.innerHTML = '';
+
+            // Render Đồ Ăn
+            for (const name in FOOD_ITEMS) {
+                const item = FOOD_ITEMS[name];
+                const card = document.createElement('div');
+                card.className = 'shop-item-card';
+                card.innerHTML = `
+                    <h4>${name}</h4>
+                    <p>${item.description}</p>
+                    <div class="shop-price">💰 ${item.price} Chicoin</div>
+                `;
+                card.onclick = () => buyItem('food', name, item);
+                foodGrid.appendChild(card);
+            }
+
+            // Render Vũ Khí
+            for (const name in WEAPONS_SHOP) {
+                const item = WEAPONS_SHOP[name];
+                const card = document.createElement('div');
+                card.className = 'shop-item-card';
+                card.innerHTML = `
+                    <h4>${name}</h4>
+                    <p>ATK +${item.atk}, DEF +${item.def}</p>
+                    <p>${item.description}</p>
+                    <div class="shop-price">💰 ${item.price} Chicoin</div>
+                `;
+                card.onclick = () => buyItem('weapon', name, item);
+                weaponGrid.appendChild(card);
+            }
+        }
+
+        function buyItem(type, name, item) {
+            const p = game.player;
+
+            // Kiểm tra tiền
+            if (p.chicoin < item.price) {
+                logMessage(`💰 Bạn không đủ Chicoin (${p.chicoin}/${item.price}) để mua ${name}!`, 'error');
+                return;
+            }
+
+            // Kiểm tra HP đầy khi mua đồ ăn
+            if (type === 'food' && p.hp === p.maxHp && (p.inventory[name] || 0) > 0) {
+                 logMessage("HP đã đầy và bạn đã có vật phẩm này. Vui lòng dùng hết món cũ hoặc quay lại sau.", 'warn');
+                 return;
+            }
+
+
+            // Trừ tiền
+            p.chicoin -= item.price;
+            logMessage(`Đã mua ${name} với giá 💰 ${item.price} Chicoin.`, 'message-coin');
+
+            // Thêm vật phẩm vào túi đồ
+            if (type === 'food') {
+                if (FOOD_ITEMS[name]) {
+                    if (p.inventory[name] === undefined) {
+                        p.inventory[name] = 0;
+                    }
+                    p.inventory[name]++;
+                } else {
+                    logMessage(`LỖI: Vật phẩm hồi máu ${name} không tồn tại.`, 'error');
+                }
+            } else if (type === 'weapon') {
+                if (WEAPONS_SHOP[name]) {
+                    if (p.inventory[name] === undefined) {
+                        p.inventory[name] = 0;
+                    }
+                    p.inventory[name]++;
+                    const currentWeapon = WEAPONS[p.weapon] || WEAPONS['Không'];
+                    if (p.weapon === 'Không' || item.atk + item.def > currentWeapon.atk + currentWeapon.def) {
+                        equipWeapon(name);
+                    }
+                } else {
+                    logMessage(`LỖI: Vũ khí ${name} không tồn tại.`, 'error');
+                }
+            }
+
+            updateUI();
+            saveGame();
+        }
+        
+        // --- HỆ THỐNG BOSS CHÍNH ---
+
+        function renderFinalBosses() {
+             const bossGrid = document.getElementById('finalBossGrid');
+             bossGrid.innerHTML = '';
+             
+             for (const name in FINAL_BOSS_POOL) {
+                 const boss = FINAL_BOSS_POOL[name];
+                 const isDefeated = game.finalBossesDefeated.includes(name);
+                 const card = document.createElement('div');
+                 card.className = 'shop-item-card';
+                 card.style.backgroundColor = isDefeated ? '#bbf7d0' : '#fee2e2';
+                 
+                 card.innerHTML = `
+                     <h4>${boss.icon} ${name}</h4>
+                     <p style="font-weight: bold;">HP: ${boss.hp} | ATK: ${boss.atk} | DEF: ${boss.def}</p>
+                     <p style="font-size: 0.9rem; margin-bottom: 8px;">Đặc điểm: ${boss.special}</p>
+                     <div class="shop-price">${isDefeated ? '✅ ĐÃ ĐÁNH BẠI' : '🔥 THỬ THÁCH'}</div>
+                 `;
+                 
+                 if (!isDefeated) {
+                     card.onclick = () => {
+                         if (game.player.hp < game.player.maxHp) {
+                             logMessage("HP chưa đầy! Hãy nghỉ ngơi trước khi đối đầu với Boss Chính!", 'error');
+                             return;
+                         }
+                         if (confirm(`Bạn có chắc chắn muốn đối đầu với BOSS CHÍNH ${name}?`)) {
+                             startFinalBossFight(name);
+                         }
+                     };
+                 } else {
+                     card.style.cursor = 'default';
+                 }
+                 
+                 bossGrid.appendChild(card);
+             }
+        }
+
+
+        // --- KHỞI ĐỘNG BAN ĐẦU ---
+
+        window.onload = () => {
+            setupMusic(); 
+            // Thay thế confirm() bằng modal/log message
+            window.confirm = (message) => {
+                 logMessage(`(Cần xác nhận: ${message}) - Tiếp tục bằng cách nhấp lại nút hành động.`, 'warn');
+                 return true;
+            };
+
+            if (window.isFirebaseAvailable === false || typeof __firebase_config === 'undefined' || JSON.parse(__firebase_config).projectId === 'YOUR_PROJECT_ID') {
+                document.getElementById('saveLoadStatus').textContent = "Chế độ Offline: Không thể lưu game.";
+            }
+        };
+
+    </script>
+</body>
+</html>
