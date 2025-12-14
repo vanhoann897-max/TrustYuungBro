@@ -146,11 +146,19 @@
             font-size: 1.4em;
         }
         
-        /* Style MỚI cho 36 */
+        /* Style cho 36 */
         .result-36 {
             background-color: #32CD32; /* Màu xanh lá chanh */
             color: #fff;
             border: 2px solid #1e831e;
+            font-size: 1.5em;
+        }
+        
+        /* Style MỚI cho Yuung/Dũng */
+        .result-yuung {
+            background-color: #8A2BE2; /* Màu xanh tím */
+            color: #fff;
+            border: 2px solid #5d179d;
             font-size: 1.5em;
         }
 
@@ -193,6 +201,10 @@
             'nobita', 'shizuka', 'killua', 'gon', 'kurapika', 'hisoka', 'anya', 'loid', 'yor',
             'saitama', 'genos', 'subaru', 'reigen', 'mob'
         ];
+        
+        // DANH SÁCH TÊN YUUNG/DŨNG
+        const yuungNames = ['yuung', 'dung', 'nguyenhoangdung'];
+
 
         function checkCrush() {
             const crushName = document.getElementById('crush-name').value.trim();
@@ -218,21 +230,28 @@
 
             // 2. KIỂM TRA CÁC TRƯỜNG HỢP ĐẶC BIỆT THEO THỨ TỰ ƯU TIÊN
 
-            // Ưu tiên 1: Mã 36
-            if (normalizedName === '36') {
+            // Ưu tiên 1: Tên Yuung/Dũng
+            if (yuungNames.includes(normalizedName)) {
+                specialMessage = {
+                    text: 'b-bạn thi~ch mì-nh hả~ awww=))))',
+                    class: 'result-yuung'
+                };
+            }
+            // Ưu tiên 2: Mã 36
+            else if (normalizedName === '36') {
                 specialMessage = {
                     text: 'tôi ăn rau má tôi ăn nem chua tôi đi phá đường tàu!!!',
                     class: 'result-36'
                 };
             }
-            // Ưu tiên 2: Ishowspeed
+            // Ưu tiên 3: Ishowspeed
             else if (normalizedName === 'ishowspeed') {
                 specialMessage = {
                     text: '😭 my mom is kinda home less 😭',
                     class: 'result-speed'
                 };
             }
-            // Ưu tiên 3: Tên Anime
+            // Ưu tiên 4: Tên Anime
             else if (animeNames.includes(normalizedName)) {
                 specialMessage = {
                     text: '😇 Mày thực sự crush một đứa không có thật à? 😇',
